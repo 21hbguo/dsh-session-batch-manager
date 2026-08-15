@@ -1,11 +1,17 @@
 # @dsh-external/dsh-session-batch-manager
 
-批量选择会话进行归档或删除的管理面板（DSH Web GUI 侧边栏入口 + 覆盖面板）。
+批量选择会话进行归档或删除的管理面板（DSH Web GUI 侧边栏主入口 + 设置页补充入口 + 覆盖面板）。
 
 ## 功能
 
-侧边栏底部（`sidebar.footer.action` 槽，设置入口上方）新增「批量选择」按钮（窄栏为图标），
-点击打开**批量选择覆盖面板**：
+**入口（双入口共享同一覆盖面板）**：
+
+1. **主入口**：侧边栏底部 `sidebar.footer.action` 槽（设置入口上方）的「☑ 批量选择」按钮
+   （窄栏为图标）。工作区会话列表区域（`sidebar.workspaces`）没有可加的头部槽位，
+   footer action 是最贴近侧边栏的加性挂载点。
+2. **补充入口**：设置页「会话管理」区块（`settings.section`）内的「打开批量选择面板」按钮。
+
+点击任一入口打开**批量选择覆盖面板**（全屏遮罩 + 居中卡片）：
 
 - **会话列表**：列出本机全部会话（官方 `POST /api/session.list` + `POST /api/workspace.list`
   按 `archivedSessionIds` join），每行显示 标题（projection `title`）/ 状态（运行中 · 归档 ·
@@ -27,8 +33,9 @@
   - 其余会话：`ctx.sessionPersistence.locate(meta)` 定位 JSONL 日志（含压缩后缀物理路径）
     → `fs.unlink(path)`；文件已不存在按已删除计（幂等）
   - `workspace.sessionIds` 记账无官方移除 API，删除后保留幽灵 id（见「已知限制」）
-- **client**（`src/client/index.ts`）：`sidebar.footer.action` 触发器 + 原生 DOM 覆盖面板
-  （无 UI 框架）；wire 类型从 `@deepseek-ai/dsh-client-connection/client` type-only 导入。
+- **client**（`src/client/index.ts`）：`sidebar.footer.action` 触发器（主入口）+
+  `settings.section` 区块（补充入口）+ 原生 DOM 覆盖面板（无 UI 框架）；wire 类型从
+  `@deepseek-ai/dsh-client-connection/client` type-only 导入。
   注意：`@deepseek-ai/dsh-api-remotes/client` 的 d.ts 在本插件编译上下文里跨包跳转
   解析失败（该包自身 node_modules 未声明 `dsh-client-connection`），类型会退化为 `any`，
   因此直接使用其类型出口的底层包。

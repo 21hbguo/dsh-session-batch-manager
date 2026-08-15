@@ -1,11 +1,13 @@
 /**
- * @dsh-external/dsh-session-batch-manager — 浏览器半区：侧边栏「批量选择」入口 + 覆盖面板。
+ * @dsh-external/dsh-session-batch-manager — 浏览器半区：批量选择入口 + 覆盖面板。
  *
- * 挂载点：`sidebar.footer.action`（ui-sidebar shell 声明的 list 槽，位于侧边栏底部、
- * 设置入口上方，宽/窄两种状态都渲染）——工作区会话列表区域没有可加的头部槽位，
- * 该 footer action 是最贴近侧边栏的加性挂载点。
+ * 入口（双入口共享同一覆盖面板）：
+ * 1. 主入口：`sidebar.footer.action`（ui-sidebar shell 声明的 list 槽，位于侧边栏底部、
+ *    设置入口上方，宽/窄两种状态都渲染）——工作区会话列表区域没有可加的头部槽位，
+ *    该 footer action 是最贴近侧边栏的加性挂载点。
+ * 2. 补充入口：`settings.section`（设置页「会话管理」区块内的「打开批量选择面板」按钮）。
  *
- * 交互：点击「批量选择」→ 打开覆盖面板（全屏遮罩 + 居中卡片）：
+ * 交互：点击入口 → 打开覆盖面板（全屏遮罩 + 居中卡片）：
  * - 会话列表：全量会话（官方 `POST /api/session.list` + `POST /api/workspace.list`
  *   按 archivedSessionIds join），每行 标题(projection title)/状态(运行中·归档·空闲)/cwd，
  *   带 checkbox 多选 + 全选
@@ -135,6 +137,8 @@ const PANEL_CSS = `
 }
 .sbm-trigger:hover { background: rgba(255,255,255,0.08); }
 .sbm-trigger-rail { justify-content: center; padding: 6px; font-size: 15px; }
+.sbm-section { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.sbm-section-hint { font-size: 12px; color: #7c828c; line-height: 1.7; }
 `
 
 /** 注入面板样式（幂等）。 */
@@ -485,15 +489,32 @@ class SessionBatchPanel {
 }
 
 /**
- * 侧边栏 footer 触发器：点击打开批量选择覆盖面板。
- * 只渲染一个按钮；面板实例挂在 ref 上，组件卸载时一并清理。
+ * 面板生命周期管理器：一个入口持有一个面板实例（重复点击不重复打开，
+ * 关闭时清引用；dispose 用于入口组件卸载时兜底清理）。
+ */
+function panelOpener(connection: ConnectionHandle): { open: () => void; dispose: () => void } {
+  let panel: SessionBatchPanel | null = null
+  return {
+    open: (): void => {
+      if (panel !== null) return
+      panel = new SessionBatchPanel(connection, () => { panel = null })
+      panel.mount()
+    },
+    dispose: (): void => {
+      panel?.dispose()
+      panel = null
+    },
+  }
+}
+
+/**
+ * 侧边栏 footer 触发器（主入口）：点击打开批量选择覆盖面板。
+ * 宽栏渲染「☑ 批量选择」，窄栏只渲染图标。
  */
 function BatchSelectTrigger({ connection, wide }: { connection: ConnectionHandle; wide?: boolean }): ReactNode {
-  const panelRef = useRef<SessionBatchPanel | null>(null)
-  useEffect(() => () => {
-    panelRef.current?.dispose()
-    panelRef.current = null
-  }, [])
+  const opener = useRef<ReturnType<typeof panelOpener> | null>(null)
+  if (opener.current === null) opener.current = panelOpener(connection)
+  useEffect(() => () => { opener.current?.dispose() }, [])
   const rail = wide === false
   return createElement(
     'button',
@@ -501,14 +522,37 @@ function BatchSelectTrigger({ connection, wide }: { connection: ConnectionHandle
       type: 'button',
       className: rail ? 'sbm-trigger sbm-trigger-rail' : 'sbm-trigger',
       title: '批量选择会话（批量归档 / 批量删除）',
-      onClick: () => {
-        if (panelRef.current !== null) return
-        const panel = new SessionBatchPanel(connection, () => { panelRef.current = null })
-        panelRef.current = panel
-        panel.mount()
-      },
+      onClick: opener.current.open,
     },
     rail ? '☑' : '☑ 批量选择',
+  )
+}
+
+/**
+ * 设置页「会话管理」区块（补充入口）：一个打开批量选择面板的按钮。
+ * 面板形态与侧边栏入口完全一致（同一覆盖层）。
+ */
+function SettingsSectionEntry({ connection }: { connection: ConnectionHandle }): ReactNode {
+  const opener = useRef<ReturnType<typeof panelOpener> | null>(null)
+  if (opener.current === null) opener.current = panelOpener(connection)
+  useEffect(() => () => { opener.current?.dispose() }, [])
+  return createElement(
+    'div',
+    { className: 'sbm-section' },
+    createElement(
+      'button',
+      {
+        type: 'button',
+        className: 'sbm-btn',
+        onClick: opener.current.open,
+      },
+      '打开批量选择面板',
+    ),
+    createElement(
+      'div',
+      { className: 'sbm-section-hint' },
+      '批量选择会话进行归档（不可逆）或删除（不可恢复）；运行中 / subagent 会话会被删除自动跳过。',
+    ),
   )
 }
 
@@ -516,7 +560,7 @@ function BatchSelectTrigger({ connection, wide }: { connection: ConnectionHandle
 export const inject = ['slots', 'connection']
 
 /**
- * 注册侧边栏「批量选择」footer action。
+ * 注册批量选择入口：侧边栏 footer action（主入口）+ 设置页区块（补充入口）。
  * @param ctx - client 根上下文。
  */
 export function apply(ctx: Context): void {
@@ -529,5 +573,14 @@ export function apply(ctx: Context): void {
       id: 'session-batch-manager',
       order: 10,
     }, trigger),
+  )
+  const sectionEntry = (): ReactNode => createElement(SettingsSectionEntry, { connection })
+  ctx.slots.inject('settings.section', () =>
+    ctx.slots.register({
+      name: 'settings.section',
+      id: 'session-batch-manager',
+      order: 50,
+      label: () => '会话管理',
+    }, sectionEntry),
   )
 }
