@@ -9,15 +9,16 @@
  *
  * 交互：点击入口 → 打开覆盖面板（全屏遮罩 + 居中卡片）：
  * - 会话列表：全量会话（官方 `POST /api/session.list` + `POST /api/workspace.list`
- *   按 archivedSessionIds join），每行 标题(projection title)/状态(运行中·归档·空闲)/cwd，
- *   带 checkbox 多选 + 全选
- * - 批量归档：逐条官方 RPC `api.workspace.archiveSession`（幂等；可在面板中恢复）
- * - 批量恢复：勾选已归档会话（先点「已归档」显示）后调 host 自实现端点
- *   `connection.rpc.call('/session-batch', 'unarchive', { sessionIds })`
- *   （非破坏性：仅从归档集合移除，无确认弹窗）
- * - 批量删除：二次确认（window.confirm）后调 host 自实现端点
- *   `connection.rpc.call('/session-batch', 'delete', { sessionIds })`
- *   （运行中/subagent 会话由 host 拒绝并跳过）；删除物理移除日志文件，不可恢复
+ *   按 archivedSessionIds join），标题栏实时统计 共 N · 归档 M · 运行中 K；
+ *   每行 标题/状态(运行中·归档)/cwd，subagent 会话额外标注；带 checkbox 多选 + 全选
+ * - 视图切换组：全部 / 未归档 / 已归档 / 运行中 互斥分段按钮（默认「未归档」），
+ *   切换保留选中集；搜索框按 标题 / cwd 子串过滤（大小写不敏感），与视图叠加
+ * - 数量化动作按钮：`归档 (N)` 只作用于 选中∩未归档（逐条官方 RPC
+ *   `api.workspace.archiveSession`，幂等）；`恢复 (N)` 只作用于 选中∩已归档
+ *   （host 自实现端点 `connection.rpc.call('/session-batch', 'unarchive', { sessionIds })`，
+ *   非破坏性无确认弹窗）；`删除 (N)` 作用于全部选中（二次确认后调
+ *   `connection.rpc.call('/session-batch', 'delete', { sessionIds })`，
+ *   运行中/subagent 会话由 host 拒绝并跳过；删除物理移除日志文件，不可恢复）
  * - 操作后自动重新拉取列表；标题栏 × 或遮罩点击关闭
  *
  * 全部渲染为原生 DOM（无 UI 框架），组件本身是 React FC（slot 系统要求），
@@ -90,6 +91,9 @@ interface SessionRow {
   archived: boolean
 }
 
+/** 面板视图（互斥分段按钮组）。 */
+type PanelView = 'all' | 'unarchived' | 'archived' | 'running'
+
 /** 面板样式，注入一次。 */
 const PANEL_CSS = `
 .sbm-overlay {
@@ -121,6 +125,16 @@ const PANEL_CSS = `
 .sbm-card-close:hover { color: #dc2626; background: #f3f4f6; }
 .sbm-body { padding: 12px 14px; overflow: auto; }
 .sbm-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.sbm-views { display: flex; align-items: center; gap: 4px; }
+.sbm-search {
+  font: inherit; padding: 4px 10px; border-radius: 8px;
+  flex: 1 1 120px; min-width: 120px;
+  background: #ffffff; color: #1f2328;
+  border: 1px solid #e3e6ea; outline: none;
+  transition: border-color 150ms var(--ds-ease-in-out);
+}
+.sbm-search:focus { border-color: #4f8cff; }
+.sbm-search::placeholder { color: #9ca3af; }
 .sbm-btn {
   font: inherit; padding: 4px 12px; border-radius: 8px; cursor: pointer;
   background: transparent; color: var(--dsw-alias-label-primary);
@@ -147,7 +161,6 @@ const PANEL_CSS = `
 }
 .sbm-badge-running { background: #e7f6ec; color: #1a7f37; border: 1px solid #b7e4c3; }
 .sbm-badge-archived { background: #f1f2f4; color: #5f6672; border: 1px solid #d8dce1; }
-.sbm-badge-idle { background: #eaf2ff; color: #2563eb; border: 1px solid #c7dbff; }
 .sbm-badge-subagent { background: #fdf3e3; color: #b45309; border: 1px solid #f2ddb0; }
 .sbm-cwd { flex: none; max-width: 220px; font-size: 11px; color: #6b7280; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sbm-time { flex: none; font-size: 11px; color: #6b7280; white-space: nowrap; }
@@ -216,28 +229,30 @@ function reasonLabel(reason: string): string {
 }
 
 /**
- * 批量选择覆盖面板：持有 DOM 子树与全部面板状态。
- * 数据逻辑与之前 settings.section 版本完全一致（枚举/归档/删除复用）。
+ * 批量选择覆盖面板 v2：视图切换组 + 搜索过滤 + 标题栏统计 + 数量化动作按钮。
+ * 持有 DOM 子树与全部面板状态（选中集 / 视图 / busy）。
  */
 class SessionBatchPanel {
   private readonly connection: ConnectionHandle
   private readonly onClose: () => void
   /** 遮罩根节点（挂在 document.body，dispose 时移除）。 */
   readonly overlay: HTMLDivElement
+  private readonly titleEl: HTMLSpanElement
   private readonly listEl: HTMLDivElement
   private readonly statusEl: HTMLSpanElement
   private readonly archiveBtn: HTMLButtonElement
   private readonly deleteBtn: HTMLButtonElement
   private readonly unarchiveBtn: HTMLButtonElement
-  private readonly archivedBtn: HTMLButtonElement
+  private readonly viewBtns: Map<PanelView, HTMLButtonElement>
+  private readonly searchEl: HTMLInputElement
   private readonly selectAllEl: HTMLInputElement
   private readonly countEl: HTMLSpanElement
 
   private rows: SessionRow[] = []
   private readonly selected = new Set<SessionId>()
   private busy = false
-  /** 是否显示已归档会话（默认隐藏）。 */
-  private showArchived = false
+  /** 当前视图（默认「未归档」，与 v1 默认隐藏已归档一致）。 */
+  private view: PanelView = 'unarchived'
 
   constructor(connection: ConnectionHandle, onClose: () => void) {
     this.connection = connection
@@ -252,54 +267,77 @@ class SessionBatchPanel {
 
     const titleBar = document.createElement('div')
     titleBar.className = 'sbm-card-title'
-    const titleText = document.createElement('span')
-    titleText.textContent = '批量选择会话'
+    this.titleEl = document.createElement('span')
+    this.titleEl.textContent = '批量选择会话'
     const closeBtn = document.createElement('button')
     closeBtn.type = 'button'
     closeBtn.className = 'sbm-card-close'
     closeBtn.textContent = '✕'
     closeBtn.title = '关闭'
     closeBtn.addEventListener('click', () => this.dispose())
-    titleBar.append(titleText, closeBtn)
+    titleBar.append(this.titleEl, closeBtn)
 
     const body = document.createElement('div')
     body.className = 'sbm-body'
 
-    // 工具条：批量归档 / 批量删除 / 刷新 / 状态
+    // 工具条：视图切换组 + 搜索 + 数量化动作按钮 + 刷新 + 状态
     const toolbar = document.createElement('div')
     toolbar.className = 'sbm-toolbar'
+
+    this.viewBtns = new Map()
+    const views = document.createElement('div')
+    views.className = 'sbm-views'
+    const viewLabels: Array<[PanelView, string, string]> = [
+      ['all', '全部', '显示全部会话'],
+      ['unarchived', '未归档', '只显示未归档会话（默认）'],
+      ['archived', '已归档', '只显示已归档会话'],
+      ['running', '运行中', '只显示运行中会话'],
+    ]
+    for (const [key, label, tip] of viewLabels) {
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.className = 'sbm-btn'
+      btn.textContent = label
+      btn.title = tip
+      btn.addEventListener('click', () => {
+        if (this.view === key) return
+        this.view = key
+        for (const [view, viewBtn] of this.viewBtns) {
+          viewBtn.classList.toggle('sbm-btn-active', view === key)
+        }
+        this.render()
+      })
+      this.viewBtns.set(key, btn)
+      views.appendChild(btn)
+    }
+    this.viewBtns.get(this.view)?.classList.add('sbm-btn-active')
+
+    this.searchEl = document.createElement('input')
+    this.searchEl.type = 'search'
+    this.searchEl.className = 'sbm-search'
+    this.searchEl.placeholder = '搜索标题 / cwd'
+    this.searchEl.addEventListener('input', () => this.render())
 
     this.archiveBtn = document.createElement('button')
     this.archiveBtn.type = 'button'
     this.archiveBtn.className = 'sbm-btn'
-    this.archiveBtn.textContent = '批量归档'
-    this.archiveBtn.title = '归档选中的会话（可在面板中恢复）'
+    this.archiveBtn.textContent = '归档 (0)'
+    this.archiveBtn.title = '归档选中的未归档会话（可在面板中恢复）'
     this.archiveBtn.addEventListener('click', () => void this.archiveSelected())
 
     this.unarchiveBtn = document.createElement('button')
     this.unarchiveBtn.type = 'button'
     this.unarchiveBtn.className = 'sbm-btn'
-    this.unarchiveBtn.textContent = '批量恢复'
+    this.unarchiveBtn.textContent = '恢复 (0)'
     this.unarchiveBtn.title = '恢复选中的已归档会话（回到未归档列表）'
     this.unarchiveBtn.addEventListener('click', () => void this.unarchiveSelected())
 
     this.deleteBtn = document.createElement('button')
     this.deleteBtn.type = 'button'
     this.deleteBtn.className = 'sbm-btn sbm-btn-danger'
-    this.deleteBtn.textContent = '批量删除'
+    this.deleteBtn.textContent = '删除 (0)'
     this.deleteBtn.title = '物理删除选中的会话日志文件（不可恢复）'
     this.deleteBtn.addEventListener('click', () => void this.deleteSelected())
-
-    this.archivedBtn = document.createElement('button')
-    this.archivedBtn.type = 'button'
-    this.archivedBtn.className = 'sbm-btn'
-    this.archivedBtn.textContent = '已归档'
-    this.archivedBtn.title = '显示/隐藏已归档会话（默认隐藏）'
-    this.archivedBtn.addEventListener('click', () => {
-      this.showArchived = !this.showArchived
-      this.archivedBtn.classList.toggle('sbm-btn-active', this.showArchived)
-      this.render()
-    })
 
     const refreshBtn = document.createElement('button')
     refreshBtn.type = 'button'
@@ -310,7 +348,7 @@ class SessionBatchPanel {
     this.statusEl = document.createElement('span')
     this.statusEl.className = 'sbm-status'
 
-    toolbar.append(this.archivedBtn, this.unarchiveBtn, this.archiveBtn, this.deleteBtn, refreshBtn, this.statusEl)
+    toolbar.append(views, this.searchEl, this.archiveBtn, this.unarchiveBtn, this.deleteBtn, refreshBtn, this.statusEl)
 
     // 全选行
     const selectLine = document.createElement('label')
@@ -329,7 +367,7 @@ class SessionBatchPanel {
 
     const hint = document.createElement('div')
     hint.className = 'sbm-hint'
-    hint.textContent = '提示：归档可恢复（点「已归档」查看，勾选后点「批量恢复」）；删除会物理移除会话日志文件，不可恢复。运行中 / subagent 会话会被批量删除自动跳过。'
+    hint.textContent = '提示：删除会物理移除会话日志文件，不可恢复；运行中 / subagent 会话会被批量删除自动跳过。'
 
     body.append(toolbar, selectLine, this.listEl, hint)
     card.append(titleBar, body)
@@ -371,6 +409,7 @@ class SessionBatchPanel {
           archived: archived.has(summary.sessionId),
         }))
         .sort((a, b) => b.summary.updatedAt - a.summary.updatedAt) // 最新的在上面
+      this.updateTitle()
       this.pruneSelection()
       this.render()
       this.setStatus(`共 ${this.rows.length} 个会话`)
@@ -381,14 +420,63 @@ class SessionBatchPanel {
     }
   }
 
-  /** 渲染列表与按钮态（默认过滤已归档会话）。 */
+  /** 标题栏统计：共 N（全量）· 归档 M · 运行中 K。 */
+  private updateTitle(): void {
+    let archivedCount = 0
+    let runningCount = 0
+    for (const row of this.rows) {
+      if (row.archived) archivedCount += 1
+      if (row.summary.running) runningCount += 1
+    }
+    this.titleEl.textContent = `批量选择会话（共 ${this.rows.length} · 归档 ${archivedCount} · 运行中 ${runningCount}）`
+  }
+
+  /**
+   * 当前视图 + 搜索过滤后的可见行。render / toggleSelectAll / syncControls 共用
+   * （单一来源：全选勾选态与列表渲染必须基于同一集合）。
+   */
+  private visibleRows(): SessionRow[] {
+    let rows = this.rows
+    switch (this.view) {
+      case 'all':
+        break
+      case 'unarchived':
+        rows = rows.filter((row) => !row.archived)
+        break
+      case 'archived':
+        rows = rows.filter((row) => row.archived)
+        break
+      case 'running':
+        rows = rows.filter((row) => row.summary.running === true)
+        break
+    }
+    const query = this.searchEl.value.trim().toLowerCase()
+    if (query !== '') {
+      rows = rows.filter((row) =>
+        titleOf(row.summary).toLowerCase().includes(query)
+        || (row.summary.cwd ?? '').toLowerCase().includes(query))
+    }
+    return rows
+  }
+
+  /** 当前视图下无行的空态文案。 */
+  private emptyText(): string {
+    switch (this.view) {
+      case 'all': return '暂无会话'
+      case 'unarchived': return '暂无未归档会话'
+      case 'archived': return '暂无已归档会话'
+      case 'running': return '暂无运行中会话'
+    }
+  }
+
+  /** 渲染列表与按钮态（按当前视图 + 搜索过滤）。 */
   private render(): void {
     this.listEl.textContent = ''
-    const visible = this.showArchived ? this.rows : this.rows.filter((row) => !row.archived)
+    const visible = this.visibleRows()
     if (visible.length === 0) {
       const empty = document.createElement('div')
       empty.className = 'sbm-empty'
-      empty.textContent = this.showArchived ? '暂无会话' : '暂无未归档会话'
+      empty.textContent = this.searchEl.value.trim() === '' ? this.emptyText() : '无匹配会话'
       this.listEl.appendChild(empty)
     }
     for (const row of visible) {
@@ -422,8 +510,6 @@ class SessionBatchPanel {
       badges.push(this.badge('运行中', 'sbm-badge-running'))
     } else if (row.archived) {
       badges.push(this.badge('归档', 'sbm-badge-archived'))
-    } else {
-      badges.push(this.badge('空闲', 'sbm-badge-idle'))
     }
     if (summary.origin === 'subagent') {
       badges.push(this.badge('subagent', 'sbm-badge-subagent'))
@@ -450,9 +536,9 @@ class SessionBatchPanel {
     return el
   }
 
-  /** 全选切换：只作用于当前可见（未归档）的会话。 */
+  /** 全选切换：只作用于当前可见（视图 + 搜索过滤后）的会话；取消 = 清空选中集。 */
   private toggleSelectAll(checked: boolean): void {
-    const visible = this.showArchived ? this.rows : this.rows.filter((row) => !row.archived)
+    const visible = this.visibleRows()
     if (checked) {
       for (const row of visible) this.selected.add(row.summary.sessionId)
     } else {
@@ -469,12 +555,20 @@ class SessionBatchPanel {
     }
   }
 
-  /** 批量归档：逐条官方 RPC（幂等）。 */
+  /** 选中集中满足行条件（archived 状态）的 id 子集——动作按钮的执行范围。 */
+  private selectedIdsFor(predicate: (row: SessionRow) => boolean): SessionId[] {
+    return [...this.selected].filter((id) => {
+      const row = this.rows.find((candidate) => candidate.summary.sessionId === id)
+      return row !== undefined && predicate(row)
+    })
+  }
+
+  /** 批量归档：逐条官方 RPC（幂等），只作用于 选中 ∩ 未归档。 */
   private async archiveSelected(): Promise<void> {
-    if (this.selected.size === 0) return
-    if (!window.confirm(`归档选中的 ${this.selected.size} 个会话？\n\n归档不可逆（官方无 unarchive）。`)) return
+    const ids = this.selectedIdsFor((row) => !row.archived)
+    if (ids.length === 0) return
+    if (!window.confirm(`归档选中的 ${ids.length} 个会话？\n\n归档可在面板中恢复。`)) return
     this.setBusy(true, '归档中…')
-    const ids = [...this.selected]
     let okCount = 0
     const failures: string[] = []
     try {
@@ -500,16 +594,16 @@ class SessionBatchPanel {
     }
   }
 
-  /** 批量删除：二次确认后走 host 自实现端点。 */
+  /** 批量删除：二次确认后走 host 自实现端点；作用于全部选中。 */
   private async deleteSelected(): Promise<void> {
-    if (this.selected.size === 0) return
+    const ids = [...this.selected]
+    if (ids.length === 0) return
     if (!window.confirm(
-      `删除选中的 ${this.selected.size} 个会话？\n\n`
+      `删除选中的 ${ids.length} 个会话？\n\n`
       + '将物理删除会话日志文件，不可恢复。\n'
       + '运行中 / subagent 会话会被自动跳过。',
     )) return
     this.setBusy(true, '删除中…')
-    const ids = [...this.selected]
     try {
       const result = await this.connection.rpc.call(CHANNEL, DELETE_ENDPOINT, { sessionIds: ids })
       if (!result.ok) {
@@ -538,14 +632,11 @@ class SessionBatchPanel {
     }
   }
 
-  /** 批量恢复：非破坏性（仅移出归档集合），无确认弹窗，走 host 自实现端点。 */
+  /** 批量恢复：非破坏性（仅移出归档集合），无确认弹窗，走 host 自实现端点；只作用于 选中 ∩ 已归档。 */
   private async unarchiveSelected(): Promise<void> {
-    if (this.selected.size === 0) return
-    const hasArchived = [...this.selected].some((id) =>
-      this.rows.find((row) => row.summary.sessionId === id)?.archived === true)
-    if (!hasArchived) return
+    const ids = this.selectedIdsFor((row) => row.archived)
+    if (ids.length === 0) return
     this.setBusy(true, '恢复中…')
-    const ids = [...this.selected]
     try {
       const result = await this.connection.rpc.call(CHANNEL, UNARCHIVE_ENDPOINT, { sessionIds: ids })
       if (!result.ok) {
@@ -574,19 +665,23 @@ class SessionBatchPanel {
     }
   }
 
-  /** 按钮/计数同步。 */
+  /**
+   * 按钮/计数同步：动作按钮文案数量化（N = 执行子集大小，选中集为空时显示 (0) 且禁用，
+   * 保持布局不跳动）；全选勾选态按 visibleRows() 计算。
+   */
   private syncControls(): void {
     const count = this.selected.size
     this.countEl.textContent = `已选 ${count} 个`
-    // 勾选态按可见行计算（与 toggleSelectAll/render 同源）：rows 含默认过滤的
-    // 已归档会话，直接比 rows.length 会漏判，导致「已全选时再点仍是全选」。
-    const visible = this.showArchived ? this.rows : this.rows.filter((row) => !row.archived)
+    const visible = this.visibleRows()
     this.selectAllEl.checked = visible.length > 0 && visible.every((row) => this.selected.has(row.summary.sessionId))
-    this.archiveBtn.disabled = this.busy || count === 0
+    const archivedCount = this.selectedIdsFor((row) => row.archived).length
+    const unarchivedCount = this.selectedIdsFor((row) => !row.archived).length
+    this.archiveBtn.textContent = `归档 (${unarchivedCount})`
+    this.archiveBtn.disabled = this.busy || unarchivedCount === 0
+    this.unarchiveBtn.textContent = `恢复 (${archivedCount})`
+    this.unarchiveBtn.disabled = this.busy || archivedCount === 0
+    this.deleteBtn.textContent = `删除 (${count})`
     this.deleteBtn.disabled = this.busy || count === 0
-    const hasArchivedSelection = [...this.selected].some((id) =>
-      this.rows.find((row) => row.summary.sessionId === id)?.archived === true)
-    this.unarchiveBtn.disabled = this.busy || count === 0 || !hasArchivedSelection
   }
 
   private setBusy(busy: boolean, message?: string): void {

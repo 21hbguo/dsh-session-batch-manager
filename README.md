@@ -14,15 +14,20 @@
 点击任一入口打开**批量选择覆盖面板**（全屏遮罩 + 居中卡片）：
 
 - **会话列表**：列出本机全部会话（官方 `POST /api/session.list` + `POST /api/workspace.list`
-  按 `archivedSessionIds` join），每行显示 标题（projection `title`）/ 状态（运行中 · 归档 ·
-  空闲）/ cwd，subagent 会话额外标注；含已归档会话与冷会话。
-- **多选**：checkbox 逐行勾选 + 全选。
-- **批量归档**：逐条调用官方 RPC `api.workspace.archiveSession({ sessionId })`（幂等）。
-- **批量恢复**：勾选已归档会话（先点「已归档」显示）后批量调用 host 端点 `/session-batch`
-  `unarchive`；幂等（未归档 id 跳过）；非破坏性无确认弹窗。
-- **批量删除**：二次确认（`window.confirm`）后调用 host 自实现端点
-  `connection.rpc.call('/session-batch', 'delete', { sessionIds })`；
-  删除物理移除会话日志文件，**不可恢复**。
+  按 `archivedSessionIds` join），标题栏实时统计 `共 N · 归档 M · 运行中 K`；每行显示
+  标题（projection `title`）/ 状态（运行中 · 归档）/ cwd，subagent 会话额外标注；
+  含已归档会话与冷会话。
+- **视图切换组**：全部 / 未归档 / 已归档 / 运行中 互斥分段按钮（默认「未归档」），
+  切换保留选中集。
+- **搜索过滤**：按 标题 / cwd 子串过滤（大小写不敏感，trim 后空串不过滤），与视图叠加。
+- **多选**：checkbox 逐行勾选 + 全选（勾选态按当前可见行计算）。
+- **数量化动作按钮**：
+  - `归档 (N)`：只作用于 选中 ∩ 未归档，逐条调用官方 RPC
+    `api.workspace.archiveSession({ sessionId })`（幂等）。
+  - `恢复 (N)`：只作用于 选中 ∩ 已归档，调用 host 端点 `/session-batch` `unarchive`
+    （幂等；未归档 id 跳过；非破坏性无确认弹窗）。
+  - `删除 (N)`：作用于全部选中，二次确认（`window.confirm`）后调用 host 端点
+    `/session-batch` `delete`；删除物理移除会话日志文件，**不可恢复**。
 - 操作完成后自动重新拉取列表；标题栏 × / 遮罩点击关闭。
 
 ## 架构
