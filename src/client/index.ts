@@ -11,7 +11,10 @@
  * - 会话列表：全量会话（官方 `POST /api/session.list` + `POST /api/workspace.list`
  *   按 archivedSessionIds join），每行 标题(projection title)/状态(运行中·归档·空闲)/cwd，
  *   带 checkbox 多选 + 全选
- * - 批量归档：逐条官方 RPC `api.workspace.archiveSession`（幂等）；不可逆（官方无 unarchive）
+ * - 批量归档：逐条官方 RPC `api.workspace.archiveSession`（幂等；可在面板中恢复）
+ * - 批量恢复：勾选已归档会话（先点「已归档」显示）后调 host 自实现端点
+ *   `connection.rpc.call('/session-batch', 'unarchive', { sessionIds })`
+ *   （非破坏性：仅从归档集合移除，无确认弹窗）
  * - 批量删除：二次确认（window.confirm）后调 host 自实现端点
  *   `connection.rpc.call('/session-batch', 'delete', { sessionIds })`
  *   （运行中/subagent 会话由 host 拒绝并跳过）；删除物理移除日志文件，不可恢复
@@ -31,9 +34,10 @@ import type {
 } from '@deepseek-ai/dsh-client-connection/client'
 import type { Context } from 'cordis'
 
-/** 与 host 端一致的删除端点契约。 */
+/** 与 host 端一致的删除/恢复端点契约。 */
 const CHANNEL = '/session-batch'
 const DELETE_ENDPOINT = 'delete'
+const UNARCHIVE_ENDPOINT = 'unarchive'
 
 /** ctx.slots 的最小结构面（运行时为 SlotRegistry，动态插件上下文按此签名调用）。 */
 interface SlotsServiceLike {
@@ -62,6 +66,21 @@ interface DeleteSessionResult {
 interface DeleteSessionsResponse {
   results: DeleteSessionResult[]
   deleted: number
+  skipped: number
+}
+
+/** 单条恢复结果（与 host UnarchiveSessionResult 同形）。 */
+interface UnarchiveSessionResult {
+  sessionId: string
+  status: 'restored' | 'skipped'
+  reason?: string
+  message?: string
+}
+
+/** 批量恢复响应（与 host UnarchiveSessionsResponse 同形）。 */
+interface UnarchiveSessionsResponse {
+  results: UnarchiveSessionResult[]
+  restored: number
   skipped: number
 }
 
@@ -191,6 +210,7 @@ function reasonLabel(reason: string): string {
     case 'not-found': return '未找到'
     case 'no-location': return '无日志文件'
     case 'file-error': return '文件错误'
+    case 'not-archived': return '未归档'
     default: return reason
   }
 }
@@ -208,6 +228,7 @@ class SessionBatchPanel {
   private readonly statusEl: HTMLSpanElement
   private readonly archiveBtn: HTMLButtonElement
   private readonly deleteBtn: HTMLButtonElement
+  private readonly unarchiveBtn: HTMLButtonElement
   private readonly archivedBtn: HTMLButtonElement
   private readonly selectAllEl: HTMLInputElement
   private readonly countEl: HTMLSpanElement
@@ -252,8 +273,15 @@ class SessionBatchPanel {
     this.archiveBtn.type = 'button'
     this.archiveBtn.className = 'sbm-btn'
     this.archiveBtn.textContent = '批量归档'
-    this.archiveBtn.title = '归档选中的会话（不可逆：官方无 unarchive）'
+    this.archiveBtn.title = '归档选中的会话（可在面板中恢复）'
     this.archiveBtn.addEventListener('click', () => void this.archiveSelected())
+
+    this.unarchiveBtn = document.createElement('button')
+    this.unarchiveBtn.type = 'button'
+    this.unarchiveBtn.className = 'sbm-btn'
+    this.unarchiveBtn.textContent = '批量恢复'
+    this.unarchiveBtn.title = '恢复选中的已归档会话（回到未归档列表）'
+    this.unarchiveBtn.addEventListener('click', () => void this.unarchiveSelected())
 
     this.deleteBtn = document.createElement('button')
     this.deleteBtn.type = 'button'
@@ -282,7 +310,7 @@ class SessionBatchPanel {
     this.statusEl = document.createElement('span')
     this.statusEl.className = 'sbm-status'
 
-    toolbar.append(this.archivedBtn, this.archiveBtn, this.deleteBtn, refreshBtn, this.statusEl)
+    toolbar.append(this.archivedBtn, this.unarchiveBtn, this.archiveBtn, this.deleteBtn, refreshBtn, this.statusEl)
 
     // 全选行
     const selectLine = document.createElement('label')
@@ -301,7 +329,7 @@ class SessionBatchPanel {
 
     const hint = document.createElement('div')
     hint.className = 'sbm-hint'
-    hint.textContent = '提示：归档不可逆（官方无 unarchive）；删除会物理移除会话日志文件，不可恢复。运行中 / subagent 会话会被批量删除自动跳过。'
+    hint.textContent = '提示：归档可恢复（点「已归档」查看，勾选后点「批量恢复」）；删除会物理移除会话日志文件，不可恢复。运行中 / subagent 会话会被批量删除自动跳过。'
 
     body.append(toolbar, selectLine, this.listEl, hint)
     card.append(titleBar, body)
@@ -510,6 +538,42 @@ class SessionBatchPanel {
     }
   }
 
+  /** 批量恢复：非破坏性（仅移出归档集合），无确认弹窗，走 host 自实现端点。 */
+  private async unarchiveSelected(): Promise<void> {
+    if (this.selected.size === 0) return
+    const hasArchived = [...this.selected].some((id) =>
+      this.rows.find((row) => row.summary.sessionId === id)?.archived === true)
+    if (!hasArchived) return
+    this.setBusy(true, '恢复中…')
+    const ids = [...this.selected]
+    try {
+      const result = await this.connection.rpc.call(CHANNEL, UNARCHIVE_ENDPOINT, { sessionIds: ids })
+      if (!result.ok) {
+        this.setStatus(`恢复失败：${result.error.message}`)
+        return
+      }
+      const response = result.value as UnarchiveSessionsResponse
+      const reasons = new Map<string, number>()
+      for (const item of response.results) {
+        if (item.status === 'skipped' && item.reason !== undefined) {
+          reasons.set(item.reason, (reasons.get(item.reason) ?? 0) + 1)
+        }
+      }
+      const skipText = [...reasons.entries()]
+        .map(([reason, count]) => `${reasonLabel(reason)} ${count}`)
+        .join('，')
+      this.setStatus(
+        `已恢复 ${response.restored} 个${skipText === '' ? '' : `，跳过 ${skipText}`}`,
+      )
+    } catch (error) {
+      this.setStatus(`恢复失败：${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      this.selected.clear()
+      await this.refresh()
+      this.setBusy(false)
+    }
+  }
+
   /** 按钮/计数同步。 */
   private syncControls(): void {
     const count = this.selected.size
@@ -517,6 +581,9 @@ class SessionBatchPanel {
     this.selectAllEl.checked = this.rows.length > 0 && count === this.rows.length
     this.archiveBtn.disabled = this.busy || count === 0
     this.deleteBtn.disabled = this.busy || count === 0
+    const hasArchivedSelection = [...this.selected].some((id) =>
+      this.rows.find((row) => row.summary.sessionId === id)?.archived === true)
+    this.unarchiveBtn.disabled = this.busy || count === 0 || !hasArchivedSelection
   }
 
   private setBusy(busy: boolean, message?: string): void {
@@ -574,7 +641,7 @@ function BatchSelectTrigger({ connection }: { connection: ConnectionHandle }): R
     {
       type: 'button',
       className: 'sbm-trigger',
-      title: '批量选择会话（批量归档 / 批量删除）',
+      title: '批量选择会话（批量归档 / 批量恢复 / 批量删除）',
       onClick: opener.current.open,
     },
     createElement(ChecklistIcon, { size: 16 }),
@@ -604,7 +671,7 @@ function SettingsSectionEntry({ connection }: { connection: ConnectionHandle }):
     createElement(
       'div',
       { className: 'sbm-section-hint' },
-      '批量选择会话进行归档（不可逆）或删除（不可恢复）；运行中 / subagent 会话会被删除自动跳过。',
+      '批量选择会话进行归档（可恢复）或删除（不可恢复）；运行中 / subagent 会话会被删除自动跳过。',
     ),
   )
 }

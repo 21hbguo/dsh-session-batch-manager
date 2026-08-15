@@ -1,9 +1,9 @@
 /**
  * @dsh-external/dsh-session-batch-manager — host 半区。
  *
- * 提供批量删除会话的 RPC 端点（connection 通用 RPC 通道，见
+ * 提供批量删除/恢复（unarchive）会话的 RPC 端点（connection 通用 RPC 通道，见
  * packages/client/connection/src/rpc-host.ts / rpc.ts 的 HostConnectionRpc）：
- * client 侧 `ctx.connection.rpc.call('/session-batch', 'delete', { sessionIds })`。
+ * client 侧 `ctx.connection.rpc.call('/session-batch', 'delete' | 'unarchive', { sessionIds })`。
  *
  * 删除语义（官方无删除 API，本端点自实现）：
  * - 运行中会话（ctx.agents.get(id)?.status === 'running'）拒绝 → skipped/running
@@ -12,7 +12,10 @@
  *   fs.unlink 物理删除（幂等：文件已不存在按已删除计）
  * - workspace.sessionIds 记账无官方移除 API，删除后保留幽灵 id（见 README）
  *
- * 归档走官方 RPC（api.workspace.archiveSession），本插件不实现 host 端点。
+ * 归档仍走官方 RPC（api.workspace.archiveSession，client 侧逐条调用）；
+ * 恢复（unarchive）为自实现端点：官方无 unarchive RPC，host 通过
+ * ctx.get('workspaceRegistry') 访问 workspace registry 的私有写路径
+ * （enqueueOperation/requireState/setState），与官方 archiveSession 同一持久化通道。
  * @module @dsh-external/dsh-session-batch-manager
  */
 
@@ -30,6 +33,7 @@ export const CHANNEL = '/session-batch'
 
 /** 通道内端点。 */
 export const DELETE_ENDPOINT = 'delete'
+export const UNARCHIVE_ENDPOINT = 'unarchive'
 
 /** 单条会话删除结果。 */
 export interface DeleteSessionResult {
@@ -43,6 +47,21 @@ export interface DeleteSessionResult {
 export interface DeleteSessionsResponse {
   results: DeleteSessionResult[]
   deleted: number
+  skipped: number
+}
+
+/** 单条会话恢复结果。 */
+export interface UnarchiveSessionResult {
+  sessionId: string
+  status: 'restored' | 'skipped'
+  reason?: 'not-archived'
+  message?: string
+}
+
+/** 批量恢复端点响应。 */
+export interface UnarchiveSessionsResponse {
+  results: UnarchiveSessionResult[]
+  restored: number
   skipped: number
 }
 
@@ -80,6 +99,18 @@ interface SessionPersistenceLike {
   locate(meta: SessionHeaderLike): { kind: string; path: string } | undefined
 }
 
+/**
+ * WorkspaceRegistry 内部写路径的最小面（TS private 仅为编译期标记，运行时可达）。
+ * 与官方 archiveSession 的实现同构：enqueueOperation 串行化 → requireState 读当前态
+ * → setState 写 durable 状态。官方无 unarchive RPC，本端点经此路径做过滤写回。
+ */
+interface WorkspaceRegistryInternalLike {
+  archivedSessionIds: readonly string[]
+  enqueueOperation<T>(operation: () => Promise<T>): Promise<T>
+  requireState(): { archivedSessionIds: string[] }
+  setState(state: unknown): Promise<void>
+}
+
 /** HostConnectionService 的 rpc.handle 面（packages/client/connection/src/rpc.ts）。 */
 interface HostConnectionRpcLike {
   handle(
@@ -93,11 +124,15 @@ declare module 'cordis' {
   interface Context {
     sessions: SessionStoreLike
     agents: AgentRegistryLike
+    workspaceRegistry?: WorkspaceRegistryInternalLike
   }
 }
 
-/** 校验删除负载，返回 sessionId 数组。非法负载抛错（由端点转 internal）。 */
-function parseDeletePayload(payload: unknown): string[] {
+/**
+ * 校验批量负载，返回 sessionId 数组。非法负载抛错（由端点转 internal）。
+ * delete 与 unarchive 端点共用。
+ */
+function parseSessionIdsPayload(payload: unknown): string[] {
   if (payload === null || typeof payload !== 'object') {
     throw new Error('session-batch: payload must be an object')
   }
@@ -121,7 +156,7 @@ function isFileNotFound(error: unknown): boolean {
  * @returns 汇总响应。
  */
 async function deleteSessions(ctx: Context, payload: unknown, signal: AbortSignal): Promise<DeleteSessionsResponse> {
-  const sessionIds = parseDeletePayload(payload)
+  const sessionIds = parseSessionIdsPayload(payload)
   const persistence = ctx.get('sessionPersistence') as SessionPersistenceLike | undefined
 
   // 构建 id → header 索引：挂载中的会话 + 持久化冷会话（与 session.list 同源）。
@@ -182,6 +217,60 @@ async function deleteSessions(ctx: Context, payload: unknown, signal: AbortSigna
 }
 
 /**
+ * 批量恢复（unarchive）会话：把 id 从 workspace registry 的归档集合移除。
+ * 官方无 unarchive RPC，本端点访问 registry 私有写路径（TS private 仅编译期标记，
+ * 运行时可达），与官方 archiveSession 同一持久化通道（enqueueOperation 串行化 →
+ * requireState 读当前态 → setState 写 durable 状态）。
+ * 幂等：不在归档集合内的 id 计 skipped/not-archived；不校验会话存在性（幽灵 id 允许清除）。
+ * @param ctx - host 插件上下文。
+ * @param payload - 原始 RPC 负载（{ sessionIds }）。
+ * @param signal - 调用方取消信号；中断时返回已处理部分的结果。
+ * @returns 汇总响应。
+ */
+async function unarchiveSessions(ctx: Context, payload: unknown, signal: AbortSignal): Promise<UnarchiveSessionsResponse> {
+  const sessionIds = parseSessionIdsPayload(payload)
+  const registry = ctx.get('workspaceRegistry') as WorkspaceRegistryInternalLike | undefined
+  if (
+    registry === undefined
+    || typeof registry.enqueueOperation !== 'function'
+    || typeof registry.requireState !== 'function'
+    || typeof registry.setState !== 'function'
+  ) {
+    throw new Error('session-batch: workspace registry internals unavailable')
+  }
+  // 串行化队列内：读操作前状态快照 → 过滤 → 有实际移除才写回（空过滤不触发 setState）。
+  const before = await registry.enqueueOperation(async () => {
+    const state = registry.requireState()
+    const beforeIds = [...state.archivedSessionIds]
+    const remove = new Set(sessionIds)
+    const kept = beforeIds.filter((id) => !remove.has(id))
+    const restoredCount = beforeIds.length - kept.length
+    if (restoredCount > 0) {
+      await registry.setState({ ...state, archivedSessionIds: kept })
+    }
+    return beforeIds
+  })
+
+  const results: UnarchiveSessionResult[] = []
+  for (const id of sessionIds) {
+    if (signal.aborted) break
+    if (before.includes(id)) {
+      results.push({ sessionId: id, status: 'restored' })
+    } else {
+      results.push({ sessionId: id, status: 'skipped', reason: 'not-archived' })
+    }
+  }
+
+  let restored = 0
+  let skipped = 0
+  for (const result of results) {
+    if (result.status === 'restored') restored += 1
+    else skipped += 1
+  }
+  return { results, restored, skipped }
+}
+
+/**
  * 注册批量删除 RPC 通道；connection 服务缺席时跳过（插件仍可加载）。
  * @param ctx - host 插件上下文。
  */
@@ -194,14 +283,16 @@ export function apply(ctx: Context): void {
   ctx.effect(() => connection.rpc.handle(
     CHANNEL,
     async (endpoint, payload, signal) => {
-      if (endpoint !== DELETE_ENDPOINT) {
+      if (endpoint !== DELETE_ENDPOINT && endpoint !== UNARCHIVE_ENDPOINT) {
         return {
           ok: false,
           error: { code: 'bad-request', message: `session-batch: unknown endpoint ${endpoint}`, details: {} },
         }
       }
       try {
-        const value = await deleteSessions(ctx, payload, signal)
+        const value = endpoint === UNARCHIVE_ENDPOINT
+          ? await unarchiveSessions(ctx, payload, signal)
+          : await deleteSessions(ctx, payload, signal)
         return { ok: true, value }
       } catch (error) {
         return {

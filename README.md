@@ -18,7 +18,8 @@
   空闲）/ cwd，subagent 会话额外标注；含已归档会话与冷会话。
 - **多选**：checkbox 逐行勾选 + 全选。
 - **批量归档**：逐条调用官方 RPC `api.workspace.archiveSession({ sessionId })`（幂等）。
-  ⚠️ 官方无取消归档（unarchive）接口，归档**不可逆**。
+- **批量恢复**：勾选已归档会话（先点「已归档」显示）后批量调用 host 端点 `/session-batch`
+  `unarchive`；幂等（未归档 id 跳过）；非破坏性无确认弹窗。
 - **批量删除**：二次确认（`window.confirm`）后调用 host 自实现端点
   `connection.rpc.call('/session-batch', 'delete', { sessionIds })`；
   删除物理移除会话日志文件，**不可恢复**。
@@ -26,13 +27,19 @@
 
 ## 架构
 
-- **host**（`src/index.ts`）：注册 connection 通用 RPC 通道 `/session-batch`（端点 `delete`）。
-  官方无删除会话 API，本插件自实现：
+- **host**（`src/index.ts`）：注册 connection 通用 RPC 通道 `/session-batch`（端点 `delete`、
+  `unarchive`）。官方无删除会话 API，删除自实现：
   - 运行中会话拒绝：`ctx.agents.get(id)?.status === 'running'` → `skipped/running`
   - subagent 会话拒绝：读会话 header 的 `origin === 'subagent'` → `skipped/subagent`
   - 其余会话：`ctx.sessionPersistence.locate(meta)` 定位 JSONL 日志（含压缩后缀物理路径）
     → `fs.unlink(path)`；文件已不存在按已删除计（幂等）
   - `workspace.sessionIds` 记账无官方移除 API，删除后保留幽灵 id（见「已知限制」）
+  - **unarchive（批量恢复）**：官方无 unarchive RPC，本端点自实现——通过
+    `ctx.get('workspaceRegistry')` 访问 workspace registry 的私有写路径
+    （`enqueueOperation` / `requireState` / `setState`），与官方 `archiveSession` 同一
+    持久化通道；幂等（未归档 id 计 `skipped/not-archived`）；不校验会话存在性，
+    归档集合中的幽灵 id 可直接清除；registry 服务缺失或内部方法不可用时端点返回
+    `internal` 错误。
 - **client**（`src/client/index.ts`）：`sidebar.footer.action` 触发器（主入口）+
   `settings.section` 区块（补充入口）+ 原生 DOM 覆盖面板（无 UI 框架）；wire 类型从
   `@deepseek-ai/dsh-client-connection/client` type-only 导入。
@@ -52,6 +59,17 @@ results[i]: { sessionId, status: 'deleted' | 'skipped',
               message?: string }
 ```
 
+### 恢复端点线格式
+
+```
+POST /session-batch/unarchive  （connection 通用 RPC 通道，authority: loopback）
+payload:  { "sessionIds": string[] }
+result:   { "ok": true,  "value": { results, restored, skipped } }
+        | { "ok": false, "error": { code, message, details } }
+results[i]: { sessionId, status: 'restored' | 'skipped',
+              reason?: 'not-archived', message?: string }
+```
+
 ## 构建与注入
 
 ```bash
@@ -66,10 +84,13 @@ client 源码，`tsdown` 打出 `lib/client.js`（唯一外部运行时依赖 `r
 
 ## 已知限制
 
-- **归档不可逆**：官方 `workspace.archiveSession` 无 unarchive 接口，UI 已注明。
+- **归档可恢复但无官方 RPC**：恢复走本插件自实现端点（内部访问 workspace registry
+  的私有写路径，与官方 `archiveSession` 同一持久化通道）；若 harness 重构 registry
+  内部结构，端点会以 `internal` 错误降级。
 - **删除不可恢复**：批量删除物理移除 JSONL 日志文件；会话所在目录与 workspace 记账不清理。
 - **幽灵 id**：删除后 `workspace.sessionIds` 仍保留该会话 id（官方无移除 API），
   归档集合 `archivedSessionIds` 亦然；重启 host 后列表不再出现（文件已无）。
+  归档集合中的幽灵 id 可通过 `unarchive` 端点直接清除（不校验会话存在性）。
 - **运行中 / subagent 会话拒删**：批量删除自动跳过，面板汇总展示跳过原因。
 - **attached 空闲会话为 best-effort**：删除其日志文件后，内存中的会话仍在，
   若后续有事件 flush 可能重建文件；建议只对已归档/冷会话执行删除。
