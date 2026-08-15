@@ -578,7 +578,10 @@ class SessionBatchPanel {
   private syncControls(): void {
     const count = this.selected.size
     this.countEl.textContent = `已选 ${count} 个`
-    this.selectAllEl.checked = this.rows.length > 0 && count === this.rows.length
+    // 勾选态按可见行计算（与 toggleSelectAll/render 同源）：rows 含默认过滤的
+    // 已归档会话，直接比 rows.length 会漏判，导致「已全选时再点仍是全选」。
+    const visible = this.showArchived ? this.rows : this.rows.filter((row) => !row.archived)
+    this.selectAllEl.checked = visible.length > 0 && visible.every((row) => this.selected.has(row.summary.sessionId))
     this.archiveBtn.disabled = this.busy || count === 0
     this.deleteBtn.disabled = this.busy || count === 0
     const hasArchivedSelection = [...this.selected].some((id) =>
