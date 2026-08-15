@@ -82,61 +82,69 @@ const PANEL_CSS = `
   width: min(640px, calc(100vw - 48px));
   max-height: 82vh;
   display: flex; flex-direction: column;
-  background: #1b1b20; color: #e8e8e8;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: #ffffff; color: #1f2328;
+  border: 1px solid #e3e6ea;
   border-radius: 10px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.15);
   overflow: hidden;
   font: 13px/1.6 system-ui, sans-serif;
 }
 .sbm-card-title {
   display: flex; align-items: center; justify-content: space-between;
   padding: 10px 14px; font-weight: 600;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid #eceff2;
   flex: none;
 }
 .sbm-card-close {
-  font: inherit; background: none; border: none; color: #9ba1a6;
+  font: inherit; background: none; border: none; color: #6b7280;
   cursor: pointer; padding: 2px 6px; border-radius: 6px;
 }
-.sbm-card-close:hover { color: #ff8a8d; background: rgba(255,255,255,0.08); }
+.sbm-card-close:hover { color: #dc2626; background: #f3f4f6; }
 .sbm-body { padding: 12px 14px; overflow: auto; }
 .sbm-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
 .sbm-btn {
-  font: inherit; padding: 4px 12px; border-radius: 6px; cursor: pointer;
-  background: rgba(255,255,255,0.06); color: #e8e8e8; border: 1px solid rgba(255,255,255,0.16);
+  font: inherit; padding: 4px 12px; border-radius: 8px; cursor: pointer;
+  background: transparent; color: var(--dsw-alias-label-primary);
+  border: 1px solid var(--dsw-alias-border-l2);
+  transition: background 150ms var(--ds-ease-in-out), border-color 150ms var(--ds-ease-in-out);
 }
-.sbm-btn:hover:not(:disabled) { background: rgba(255,255,255,0.12); }
+.sbm-btn:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
 .sbm-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.sbm-btn-danger:hover:not(:disabled) { border-color: #e5484d; color: #ff8a8d; }
-.sbm-status { color: #9ba1a6; font-size: 12px; flex: 1; text-align: right; }
+.sbm-btn-danger:hover:not(:disabled) { border-color: #dc2626; color: #dc2626; }
+.sbm-btn-active { border-color: #4f8cff; color: #2563eb; background: #eaf2ff; }
+.sbm-status { color: #6b7280; font-size: 12px; flex: 1; text-align: right; }
 .sbm-select-line { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .sbm-list {
-  border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
-  max-height: 46vh; overflow: auto; background: rgba(255,255,255,0.02);
+  border: 1px solid #e3e6ea; border-radius: 8px;
+  max-height: 46vh; overflow: auto; background: #fafbfc;
 }
-.sbm-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.sbm-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid #eef0f2; }
 .sbm-row:last-child { border-bottom: none; }
-.sbm-row:hover { background: rgba(255,255,255,0.04); }
+.sbm-row:hover { background: #f3f4f6; }
 .sbm-row input[type="checkbox"] { flex: none; accent-color: #4f8cff; }
 .sbm-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sbm-badge {
   flex: none; font-size: 11px; padding: 1px 7px; border-radius: 10px; white-space: nowrap;
 }
-.sbm-badge-running { background: rgba(76,175,80,0.18); color: #7bd88a; border: 1px solid rgba(76,175,80,0.4); }
-.sbm-badge-archived { background: rgba(160,160,160,0.15); color: #b0b0b0; border: 1px solid rgba(160,160,160,0.35); }
-.sbm-badge-idle { background: rgba(79,140,255,0.15); color: #8ab6ff; border: 1px solid rgba(79,140,255,0.35); }
-.sbm-badge-subagent { background: rgba(245,165,36,0.15); color: #f5c26b; border: 1px solid rgba(245,165,36,0.35); }
-.sbm-cwd { flex: none; max-width: 220px; font-size: 11px; color: #8a8f98; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sbm-hint { margin-top: 10px; font-size: 12px; color: #7c828c; line-height: 1.7; }
-.sbm-empty { padding: 18px; color: #9ba1a6; text-align: center; }
+.sbm-badge-running { background: #e7f6ec; color: #1a7f37; border: 1px solid #b7e4c3; }
+.sbm-badge-archived { background: #f1f2f4; color: #5f6672; border: 1px solid #d8dce1; }
+.sbm-badge-idle { background: #eaf2ff; color: #2563eb; border: 1px solid #c7dbff; }
+.sbm-badge-subagent { background: #fdf3e3; color: #b45309; border: 1px solid #f2ddb0; }
+.sbm-cwd { flex: none; max-width: 220px; font-size: 11px; color: #6b7280; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sbm-time { flex: none; font-size: 11px; color: #6b7280; white-space: nowrap; }
+.sbm-hint { margin-top: 10px; font-size: 12px; color: #5f6672; line-height: 1.7; }
+.sbm-empty { padding: 18px; color: #9ca3af; text-align: center; }
 .sbm-trigger {
-  font: inherit; display: flex; align-items: center; gap: 6px;
-  background: none; border: none; color: #e8e8e8;
-  cursor: pointer; padding: 6px 10px; border-radius: 8px; white-space: nowrap;
+  display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0;
+  background: transparent; border: none;
+  appearance: none; -webkit-appearance: none;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer; border-radius: 8px;
+  transition: background 150ms var(--ds-ease-in-out), color 150ms var(--ds-ease-in-out);
 }
-.sbm-trigger:hover { background: rgba(255,255,255,0.08); }
-.sbm-trigger-rail { justify-content: center; padding: 6px; font-size: 15px; }
+.sbm-trigger:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.sbm-trigger:focus, .sbm-trigger:focus-visible { outline: none; }
 .sbm-section { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 .sbm-section-hint { font-size: 12px; color: #7c828c; line-height: 1.7; }
 `
@@ -150,11 +158,15 @@ function ensureStyles(): void {
   document.head.appendChild(style)
 }
 
-/** 行标题：优先 projection 缓存里的 title，缺省退回会话 id 前缀。 */
+/** 行标题：优先 projection 缓存里的 title；缺省退回 agent preset 短名；再退回会话 id 前缀。 */
 function titleOf(summary: SessionSummary): string {
   const values = summary.projections?.values as { title?: string | null } | undefined
   const title = values?.title
   if (title !== undefined && title !== null && title !== '') return title
+  if (summary.agentPreset) {
+    const short = summary.agentPreset.split(/[/:]/).pop() ?? summary.agentPreset
+    return short
+  }
   return `会话 ${summary.sessionId.slice(0, 8)}`
 }
 
@@ -162,6 +174,13 @@ function titleOf(summary: SessionSummary): string {
 function unwrap<T>(result: RpcResult<T>): T {
   if (!result.ok) throw new Error(result.error.message)
   return result.value
+}
+
+/** 时间戳 → "YYYY-MM-DD HH:mm"（本地时区）。 */
+function formatTime(ts: number): string {
+  const d = new Date(ts)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 /** 跳过原因的中文标签。 */
@@ -189,12 +208,15 @@ class SessionBatchPanel {
   private readonly statusEl: HTMLSpanElement
   private readonly archiveBtn: HTMLButtonElement
   private readonly deleteBtn: HTMLButtonElement
+  private readonly archivedBtn: HTMLButtonElement
   private readonly selectAllEl: HTMLInputElement
   private readonly countEl: HTMLSpanElement
 
   private rows: SessionRow[] = []
   private readonly selected = new Set<SessionId>()
   private busy = false
+  /** 是否显示已归档会话（默认隐藏）。 */
+  private showArchived = false
 
   constructor(connection: ConnectionHandle, onClose: () => void) {
     this.connection = connection
@@ -240,6 +262,17 @@ class SessionBatchPanel {
     this.deleteBtn.title = '物理删除选中的会话日志文件（不可恢复）'
     this.deleteBtn.addEventListener('click', () => void this.deleteSelected())
 
+    this.archivedBtn = document.createElement('button')
+    this.archivedBtn.type = 'button'
+    this.archivedBtn.className = 'sbm-btn'
+    this.archivedBtn.textContent = '已归档'
+    this.archivedBtn.title = '显示/隐藏已归档会话（默认隐藏）'
+    this.archivedBtn.addEventListener('click', () => {
+      this.showArchived = !this.showArchived
+      this.archivedBtn.classList.toggle('sbm-btn-active', this.showArchived)
+      this.render()
+    })
+
     const refreshBtn = document.createElement('button')
     refreshBtn.type = 'button'
     refreshBtn.className = 'sbm-btn'
@@ -249,7 +282,7 @@ class SessionBatchPanel {
     this.statusEl = document.createElement('span')
     this.statusEl.className = 'sbm-status'
 
-    toolbar.append(this.archiveBtn, this.deleteBtn, refreshBtn, this.statusEl)
+    toolbar.append(this.archivedBtn, this.archiveBtn, this.deleteBtn, refreshBtn, this.statusEl)
 
     // 全选行
     const selectLine = document.createElement('label')
@@ -304,10 +337,12 @@ class SessionBatchPanel {
       const summaries = unwrap(listResult)
       const workspace = unwrap(workspaceResult)
       const archived = new Set(workspace.archivedSessionIds)
-      this.rows = summaries.items.map((summary) => ({
-        summary,
-        archived: archived.has(summary.sessionId),
-      }))
+      this.rows = summaries.items
+        .map((summary) => ({
+          summary,
+          archived: archived.has(summary.sessionId),
+        }))
+        .sort((a, b) => b.summary.updatedAt - a.summary.updatedAt) // 最新的在上面
       this.pruneSelection()
       this.render()
       this.setStatus(`共 ${this.rows.length} 个会话`)
@@ -318,16 +353,17 @@ class SessionBatchPanel {
     }
   }
 
-  /** 渲染列表与按钮态。 */
+  /** 渲染列表与按钮态（默认过滤已归档会话）。 */
   private render(): void {
     this.listEl.textContent = ''
-    if (this.rows.length === 0) {
+    const visible = this.showArchived ? this.rows : this.rows.filter((row) => !row.archived)
+    if (visible.length === 0) {
       const empty = document.createElement('div')
       empty.className = 'sbm-empty'
-      empty.textContent = '暂无会话'
+      empty.textContent = this.showArchived ? '暂无会话' : '暂无未归档会话'
       this.listEl.appendChild(empty)
     }
-    for (const row of this.rows) {
+    for (const row of visible) {
       this.listEl.appendChild(this.rowEl(row))
     }
     this.syncControls()
@@ -370,7 +406,12 @@ class SessionBatchPanel {
     cwd.textContent = summary.cwd ?? ''
     cwd.title = summary.cwd ?? ''
 
-    line.append(checkbox, title, ...badges, cwd)
+    const time = document.createElement('span')
+    time.className = 'sbm-time'
+    time.textContent = formatTime(summary.updatedAt)
+    time.title = `最新活跃：${new Date(summary.updatedAt).toLocaleString('zh-CN')}`
+
+    line.append(checkbox, title, ...badges, cwd, time)
     return line
   }
 
@@ -381,10 +422,11 @@ class SessionBatchPanel {
     return el
   }
 
-  /** 全选切换：只作用于当前列表。 */
+  /** 全选切换：只作用于当前可见（未归档）的会话。 */
   private toggleSelectAll(checked: boolean): void {
+    const visible = this.showArchived ? this.rows : this.rows.filter((row) => !row.archived)
     if (checked) {
-      for (const row of this.rows) this.selected.add(row.summary.sessionId)
+      for (const row of visible) this.selected.add(row.summary.sessionId)
     } else {
       this.selected.clear()
     }
@@ -507,24 +549,35 @@ function panelOpener(connection: ConnectionHandle): { open: () => void; dispose:
   }
 }
 
+/** 勾选清单图标（官方 ui-primitives IconChecklistOutline14 同款，内联避免依赖）。 */
+function ChecklistIcon({ size = 16 }: { size?: number }): ReactNode {
+  return createElement(
+    'svg',
+    { width: size, height: size, viewBox: '0 0 14 14', fill: 'none', xmlns: 'http://www.w3.org/2000/svg' },
+    createElement('path', { d: 'M13.3277 9.69629V10.976H7.28086V9.69629H13.3277Z', fill: 'currentColor' }),
+    createElement('path', { d: 'M13.3277 2.97256V4.25225H7.28086V2.97256H13.3277Z', fill: 'currentColor' }),
+    createElement('path', { d: 'M4.64512 10.336C4.64505 9.62755 4.07081 9.05322 3.3623 9.05322C2.65386 9.05329 2.07956 9.62759 2.07949 10.336C2.07949 11.0445 2.65382 11.6188 3.3623 11.6188C4.07085 11.6188 4.64512 11.0446 4.64512 10.336ZM5.92559 10.336C5.92559 11.7515 4.77777 12.8993 3.3623 12.8993C1.94689 12.8993 0.799805 11.7515 0.799805 10.336C0.799871 8.92066 1.94693 7.7736 3.3623 7.77354C4.77773 7.77354 5.92552 8.92062 5.92559 10.336Z', fill: 'currentColor' }),
+    createElement('path', { d: 'M4.64531 3.6123C4.6453 2.90382 4.07098 2.32949 3.3625 2.32949C2.65403 2.32951 2.0797 2.90383 2.07969 3.6123C2.07969 4.32079 2.65402 4.8951 3.3625 4.89512C4.07099 4.89512 4.64531 4.3208 4.64531 3.6123ZM5.925 3.6123C5.925 5.02772 4.77792 6.1748 3.3625 6.1748C1.9471 6.17479 0.8 5.02771 0.8 3.6123C0.800013 2.19691 1.9471 1.04982 3.3625 1.0498C4.77791 1.0498 5.92499 2.1969 5.925 3.6123Z', fill: 'currentColor' }),
+  )
+}
+
 /**
  * 侧边栏 footer 触发器（主入口）：点击打开批量选择覆盖面板。
- * 宽栏渲染「☑ 批量选择」，窄栏只渲染图标。
+ * 纯图标按钮，样式跟随侧边栏主题（iconButton 同款 28px、hover 主题变量）。
  */
-function BatchSelectTrigger({ connection, wide }: { connection: ConnectionHandle; wide?: boolean }): ReactNode {
+function BatchSelectTrigger({ connection }: { connection: ConnectionHandle }): ReactNode {
   const opener = useRef<ReturnType<typeof panelOpener> | null>(null)
   if (opener.current === null) opener.current = panelOpener(connection)
   useEffect(() => () => { opener.current?.dispose() }, [])
-  const rail = wide === false
   return createElement(
     'button',
     {
       type: 'button',
-      className: rail ? 'sbm-trigger sbm-trigger-rail' : 'sbm-trigger',
+      className: 'sbm-trigger',
       title: '批量选择会话（批量归档 / 批量删除）',
       onClick: opener.current.open,
     },
-    rail ? '☑' : '☑ 批量选择',
+    createElement(ChecklistIcon, { size: 16 }),
   )
 }
 
@@ -565,8 +618,7 @@ export const inject = ['slots', 'connection']
  */
 export function apply(ctx: Context): void {
   const connection = ctx.get('connection') as ConnectionHandle
-  const trigger = (props: { wide?: boolean }): ReactNode =>
-    createElement(BatchSelectTrigger, { connection, wide: props.wide })
+  const trigger = (): ReactNode => createElement(BatchSelectTrigger, { connection })
   ctx.slots.inject('sidebar.footer.action', () =>
     ctx.slots.register({
       name: 'sidebar.footer.action',
