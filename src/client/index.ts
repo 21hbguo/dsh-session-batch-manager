@@ -1,23 +1,29 @@
 /**
- * @dsh-external/dsh-session-batch-manager — 浏览器半区：设置页「会话管理」区块。
+ * @dsh-external/dsh-session-batch-manager — 浏览器半区：侧边栏「批量选择」入口 + 覆盖面板。
  *
- * 注册进 settings.section（导航行「会话管理」），面板内容为原生 DOM：
- * - 会话列表：全量会话（含已归档/冷会话），每行显示 标题/状态(运行中·归档·空闲)/cwd，
- *   带 checkbox 多选
- * - 批量归档：逐条调官方 RPC api.workspace.archiveSession（幂等）；不可逆（官方无 unarchive）
- * - 批量删除：二次确认后调 host 自实现端点 connection.rpc.call('/session-batch','delete',...)
+ * 挂载点：`sidebar.footer.action`（ui-sidebar shell 声明的 list 槽，位于侧边栏底部、
+ * 设置入口上方，宽/窄两种状态都渲染）——工作区会话列表区域没有可加的头部槽位，
+ * 该 footer action 是最贴近侧边栏的加性挂载点。
+ *
+ * 交互：点击「批量选择」→ 打开覆盖面板（全屏遮罩 + 居中卡片）：
+ * - 会话列表：全量会话（官方 `POST /api/session.list` + `POST /api/workspace.list`
+ *   按 archivedSessionIds join），每行 标题(projection title)/状态(运行中·归档·空闲)/cwd，
+ *   带 checkbox 多选 + 全选
+ * - 批量归档：逐条官方 RPC `api.workspace.archiveSession`（幂等）；不可逆（官方无 unarchive）
+ * - 批量删除：二次确认（window.confirm）后调 host 自实现端点
+ *   `connection.rpc.call('/session-batch', 'delete', { sessionIds })`
  *   （运行中/subagent 会话由 host 拒绝并跳过）；删除物理移除日志文件，不可恢复
- * - 操作后自动重新拉取列表
+ * - 操作后自动重新拉取列表；标题栏 × 或遮罩点击关闭
  *
  * 全部渲染为原生 DOM（无 UI 框架），组件本身是 React FC（slot 系统要求），
- * 仅负责挂载/卸载 DOM 子树。所有 dsh 依赖均为 type-only import（构建期擦除）。
+ * 仅负责渲染触发器按钮并挂载/卸载面板 DOM 子树。
+ * wire 类型从 @deepseek-ai/dsh-client-connection/client type-only 导入
+ * （@deepseek-ai/dsh-api-remotes/client 的 d.ts 在本插件编译上下文里跨包跳转
+ * 解析失败，类型会退化为 any，见 README）。
  * @module @dsh-external/dsh-session-batch-manager/client
  */
 
 import { createElement, useEffect, useRef, type ReactNode } from 'react'
-// Type-only：wire 类型直接从 @deepseek-ai/dsh-client-connection/client 导入
-// （该包自身 node_modules 完整，类型链可解析；@deepseek-ai/dsh-api-remotes/client
-// 的 d.ts 在本插件编译上下文里跨包跳转解析失败，类型会退化为 any）。
 import type {
   ConnectionHandle, RpcResult, SessionId, SessionSummary,
 } from '@deepseek-ai/dsh-client-connection/client'
@@ -65,7 +71,34 @@ interface SessionRow {
 
 /** 面板样式，注入一次。 */
 const PANEL_CSS = `
-.sbm-root { font: 13px/1.6 system-ui, sans-serif; color: #e8e8e8; min-width: 460px; }
+.sbm-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex; align-items: center; justify-content: center;
+}
+.sbm-card {
+  width: min(640px, calc(100vw - 48px));
+  max-height: 82vh;
+  display: flex; flex-direction: column;
+  background: #1b1b20; color: #e8e8e8;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  font: 13px/1.6 system-ui, sans-serif;
+}
+.sbm-card-title {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; font-weight: 600;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex: none;
+}
+.sbm-card-close {
+  font: inherit; background: none; border: none; color: #9ba1a6;
+  cursor: pointer; padding: 2px 6px; border-radius: 6px;
+}
+.sbm-card-close:hover { color: #ff8a8d; background: rgba(255,255,255,0.08); }
+.sbm-body { padding: 12px 14px; overflow: auto; }
 .sbm-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
 .sbm-btn {
   font: inherit; padding: 4px 12px; border-radius: 6px; cursor: pointer;
@@ -75,7 +108,11 @@ const PANEL_CSS = `
 .sbm-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .sbm-btn-danger:hover:not(:disabled) { border-color: #e5484d; color: #ff8a8d; }
 .sbm-status { color: #9ba1a6; font-size: 12px; flex: 1; text-align: right; }
-.sbm-list { border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; max-height: 420px; overflow: auto; background: rgba(255,255,255,0.02); }
+.sbm-select-line { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.sbm-list {
+  border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
+  max-height: 46vh; overflow: auto; background: rgba(255,255,255,0.02);
+}
 .sbm-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); }
 .sbm-row:last-child { border-bottom: none; }
 .sbm-row:hover { background: rgba(255,255,255,0.04); }
@@ -91,6 +128,13 @@ const PANEL_CSS = `
 .sbm-cwd { flex: none; max-width: 220px; font-size: 11px; color: #8a8f98; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sbm-hint { margin-top: 10px; font-size: 12px; color: #7c828c; line-height: 1.7; }
 .sbm-empty { padding: 18px; color: #9ba1a6; text-align: center; }
+.sbm-trigger {
+  font: inherit; display: flex; align-items: center; gap: 6px;
+  background: none; border: none; color: #e8e8e8;
+  cursor: pointer; padding: 6px 10px; border-radius: 8px; white-space: nowrap;
+}
+.sbm-trigger:hover { background: rgba(255,255,255,0.08); }
+.sbm-trigger-rail { justify-content: center; padding: 6px; font-size: 15px; }
 `
 
 /** 注入面板样式（幂等）。 */
@@ -116,11 +160,27 @@ function unwrap<T>(result: RpcResult<T>): T {
   return result.value
 }
 
-/** 面板控制器：持有 DOM 子树与全部面板状态。 */
+/** 跳过原因的中文标签。 */
+function reasonLabel(reason: string): string {
+  switch (reason) {
+    case 'running': return '运行中'
+    case 'subagent': return 'subagent'
+    case 'not-found': return '未找到'
+    case 'no-location': return '无日志文件'
+    case 'file-error': return '文件错误'
+    default: return reason
+  }
+}
+
+/**
+ * 批量选择覆盖面板：持有 DOM 子树与全部面板状态。
+ * 数据逻辑与之前 settings.section 版本完全一致（枚举/归档/删除复用）。
+ */
 class SessionBatchPanel {
   private readonly connection: ConnectionHandle
-  /** 面板根节点（由宿主挂到 slot 容器，dispose 时移除）。 */
-  readonly root: HTMLDivElement
+  private readonly onClose: () => void
+  /** 遮罩根节点（挂在 document.body，dispose 时移除）。 */
+  readonly overlay: HTMLDivElement
   private readonly listEl: HTMLDivElement
   private readonly statusEl: HTMLSpanElement
   private readonly archiveBtn: HTMLButtonElement
@@ -132,11 +192,31 @@ class SessionBatchPanel {
   private readonly selected = new Set<SessionId>()
   private busy = false
 
-  constructor(connection: ConnectionHandle) {
+  constructor(connection: ConnectionHandle, onClose: () => void) {
     this.connection = connection
+    this.onClose = onClose
 
-    this.root = document.createElement('div')
-    this.root.className = 'sbm-root'
+    // 遮罩 + 卡片：标题栏（标题 + 关闭） + 正文（工具条/全选/列表/提示）
+    this.overlay = document.createElement('div')
+    this.overlay.className = 'sbm-overlay'
+
+    const card = document.createElement('div')
+    card.className = 'sbm-card'
+
+    const titleBar = document.createElement('div')
+    titleBar.className = 'sbm-card-title'
+    const titleText = document.createElement('span')
+    titleText.textContent = '批量选择会话'
+    const closeBtn = document.createElement('button')
+    closeBtn.type = 'button'
+    closeBtn.className = 'sbm-card-close'
+    closeBtn.textContent = '✕'
+    closeBtn.title = '关闭'
+    closeBtn.addEventListener('click', () => this.dispose())
+    titleBar.append(titleText, closeBtn)
+
+    const body = document.createElement('div')
+    body.className = 'sbm-body'
 
     // 工具条：批量归档 / 批量删除 / 刷新 / 状态
     const toolbar = document.createElement('div')
@@ -169,8 +249,7 @@ class SessionBatchPanel {
 
     // 全选行
     const selectLine = document.createElement('label')
-    selectLine.className = 'sbm-toolbar'
-    selectLine.style.marginBottom = '6px'
+    selectLine.className = 'sbm-select-line'
     this.selectAllEl = document.createElement('input')
     this.selectAllEl.type = 'checkbox'
     this.selectAllEl.addEventListener('change', () => this.toggleSelectAll(this.selectAllEl.checked))
@@ -187,18 +266,27 @@ class SessionBatchPanel {
     hint.className = 'sbm-hint'
     hint.textContent = '提示：归档不可逆（官方无 unarchive）；删除会物理移除会话日志文件，不可恢复。运行中 / subagent 会话会被批量删除自动跳过。'
 
-    this.root.append(toolbar, selectLine, this.listEl, hint)
+    body.append(toolbar, selectLine, this.listEl, hint)
+    card.append(titleBar, body)
+    this.overlay.appendChild(card)
+
+    // 点击遮罩（卡片之外）关闭
+    this.overlay.addEventListener('click', (event) => {
+      if (event.target === this.overlay) this.dispose()
+    })
   }
 
-  /** 挂载：注入样式、首刷列表（DOM 已由宿主挂到面板容器）。 */
+  /** 挂载：注入样式、挂到 body、首刷列表。 */
   mount(): void {
     ensureStyles()
+    document.body.appendChild(this.overlay)
     void this.refresh()
   }
 
-  /** 卸载：移除 DOM（样式全局保留，无碍）。 */
+  /** 卸载：移除 DOM 并通知触发器清引用。 */
   dispose(): void {
-    this.root.remove()
+    this.overlay.remove()
+    this.onClose()
   }
 
   /** 拉取会话 + 归档集合，重建列表。 */
@@ -396,50 +484,50 @@ class SessionBatchPanel {
   }
 }
 
-/** 跳过原因的中文标签。 */
-function reasonLabel(reason: string): string {
-  switch (reason) {
-    case 'running': return '运行中'
-    case 'subagent': return 'subagent'
-    case 'not-found': return '未找到'
-    case 'no-location': return '无日志文件'
-    case 'file-error': return '文件错误'
-    default: return reason
-  }
-}
-
-/** React 挂载壳：为 slot 系统提供 FC，实际 UI 在 DOM 子树里。 */
-function SessionBatchManager({ connection }: { connection: ConnectionHandle }): ReactNode {
-  const hostRef = useRef<HTMLDivElement | null>(null)
-  useEffect(() => {
-    const host = hostRef.current
-    if (host === null) return
-    const panel = new SessionBatchPanel(connection)
-    // 面板 DOM 挂到宿主节点下（不 append 到 body）。
-    host.appendChild(panel.root)
-    panel.mount()
-    return () => panel.dispose()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connection])
-  return createElement('div', { ref: hostRef })
+/**
+ * 侧边栏 footer 触发器：点击打开批量选择覆盖面板。
+ * 只渲染一个按钮；面板实例挂在 ref 上，组件卸载时一并清理。
+ */
+function BatchSelectTrigger({ connection, wide }: { connection: ConnectionHandle; wide?: boolean }): ReactNode {
+  const panelRef = useRef<SessionBatchPanel | null>(null)
+  useEffect(() => () => {
+    panelRef.current?.dispose()
+    panelRef.current = null
+  }, [])
+  const rail = wide === false
+  return createElement(
+    'button',
+    {
+      type: 'button',
+      className: rail ? 'sbm-trigger sbm-trigger-rail' : 'sbm-trigger',
+      title: '批量选择会话（批量归档 / 批量删除）',
+      onClick: () => {
+        if (panelRef.current !== null) return
+        const panel = new SessionBatchPanel(connection, () => { panelRef.current = null })
+        panelRef.current = panel
+        panel.mount()
+      },
+    },
+    rail ? '☑' : '☑ 批量选择',
+  )
 }
 
 /** Required services: slot 注册 + connection（官方 API + 自定义 RPC 通道）。 */
 export const inject = ['slots', 'connection']
 
 /**
- * 注册设置页「会话管理」区块。
+ * 注册侧边栏「批量选择」footer action。
  * @param ctx - client 根上下文。
  */
 export function apply(ctx: Context): void {
   const connection = ctx.get('connection') as ConnectionHandle
-  const section = (_props: unknown): ReactNode => createElement(SessionBatchManager, { connection })
-  ctx.slots.inject('settings.section', () =>
+  const trigger = (props: { wide?: boolean }): ReactNode =>
+    createElement(BatchSelectTrigger, { connection, wide: props.wide })
+  ctx.slots.inject('sidebar.footer.action', () =>
     ctx.slots.register({
-      name: 'settings.section',
+      name: 'sidebar.footer.action',
       id: 'session-batch-manager',
-      order: 50,
-      label: () => '会话管理',
-    }, section),
+      order: 10,
+    }, trigger),
   )
 }
