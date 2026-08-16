@@ -2,6 +2,8 @@
 
 DeepSeek Harness (DSH) Web GUI 插件：在侧边栏与设置页提供「批量选择会话」面板，批量归档、批量恢复（unarchive）、批量删除会话。
 
+![批量选择会话面板](docs/screenshots/session-batch-panel.png)
+
 ## ✨ 功能特性
 
 - 🗂️ **双入口共享面板**：侧边栏底部「☑ 批量选择」按钮（主入口）+ 设置页「会话管理」区块（补充入口），打开同一覆盖面板
