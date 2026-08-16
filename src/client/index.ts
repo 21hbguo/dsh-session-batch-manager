@@ -229,7 +229,7 @@ function reasonLabel(reason: string): string {
 }
 
 /**
- * 批量选择覆盖面板 v2：视图切换组 + 搜索过滤 + 标题栏统计 + 数量化动作按钮。
+ * 批量选择覆盖面板：视图切换组 + 搜索过滤 + 标题栏统计 + 数量化动作按钮。
  * 持有 DOM 子树与全部面板状态（选中集 / 视图 / busy）。
  */
 class SessionBatchPanel {
@@ -251,7 +251,7 @@ class SessionBatchPanel {
   private rows: SessionRow[] = []
   private readonly selected = new Set<SessionId>()
   private busy = false
-  /** 当前视图（默认「未归档」，与 v1 默认隐藏已归档一致）。 */
+  /** 当前视图（默认「未归档」，隐藏已归档会话）。 */
   private view: PanelView = 'unarchived'
 
   constructor(connection: ConnectionHandle, onClose: () => void) {
@@ -714,7 +714,7 @@ function panelOpener(connection: ConnectionHandle): { open: () => void; dispose:
   }
 }
 
-/** 勾选清单图标（官方 ui-primitives IconChecklistOutline14 同款，内联避免依赖）。 */
+/** 勾选清单图标（内联 SVG，避免引入额外依赖）。 */
 function ChecklistIcon({ size = 16 }: { size?: number }): ReactNode {
   return createElement(
     'svg',

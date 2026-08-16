@@ -1,8 +1,7 @@
 /**
  * @dsh-external/dsh-session-batch-manager — host 半区。
  *
- * 提供批量删除/恢复（unarchive）会话的 RPC 端点（connection 通用 RPC 通道，见
- * packages/client/connection/src/rpc-host.ts / rpc.ts 的 HostConnectionRpc）：
+ * 提供批量删除/恢复（unarchive）会话的 RPC 端点（connection 通用 RPC 通道）：
  * client 侧 `ctx.connection.rpc.call('/session-batch', 'delete' | 'unarchive', { sessionIds })`。
  *
  * 删除语义（官方无删除 API，本端点自实现）：
@@ -111,7 +110,7 @@ interface WorkspaceRegistryInternalLike {
   setState(state: unknown): Promise<void>
 }
 
-/** HostConnectionService 的 rpc.handle 面（packages/client/connection/src/rpc.ts）。 */
+/** HostConnectionService 的 rpc.handle 结构面。 */
 interface HostConnectionRpcLike {
   handle(
     channel: string,
@@ -173,7 +172,7 @@ async function deleteSessions(ctx: Context, payload: unknown, signal: AbortSigna
   const results: DeleteSessionResult[] = []
   for (const id of sessionIds) {
     if (signal.aborted) break
-    // 1) 运行中会话拒绝（同 api-proxy summarizeAttached 的 running 判定）。
+    // 1) 运行中会话拒绝（运行中删除会破坏活跃会话状态）。
     if (ctx.agents.get(id)?.status === 'running') {
       results.push({ sessionId: id, status: 'skipped', reason: 'running' })
       continue
