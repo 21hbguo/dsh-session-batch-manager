@@ -10,9 +10,34 @@
     "lib"
   ],
   "license": "BSD-3-Clause",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21hbguo/dsh-session-batch-manager.git"
+  },
+  "homepage": "https://github.com/21hbguo/dsh-session-batch-manager",
+  "bugs": {
+    "url": "https://github.com/21hbguo/dsh-session-batch-manager/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "cordis",
+    "deepseek-harness",
+    "session",
+    "batch",
+    "archive",
+    "delete",
+    "management",
+    "web-ui"
+  ],
   "peerDependencies": {
     "cordis": ">=4.0.0-rc <5",
     "@deepseek-ai/dsh-client-ui-slots": ">=0.0.1-rc <2"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-client-ui-slots": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
