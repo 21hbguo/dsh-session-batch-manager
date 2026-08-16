@@ -10,7 +10,7 @@ cd "$ROOT"
 # DSH_CHECKOUT 探测：环境变量 → 常见路径
 CHECKOUT="${DSH_CHECKOUT:-}"
 if [ -z "$CHECKOUT" ]; then
-  for candidate in "$HOME/dsh-harness" "$HOME/dsh" "$HOME/.dsh/dsh-harness" "~/project/other/deepseek-harness"; do
+  for candidate in "$HOME/dsh-harness" "$HOME/dsh" "$HOME/.dsh/dsh-harness"; do
     if [ -d "$candidate/packages" ]; then CHECKOUT="$candidate"; break; fi
   done
 fi
